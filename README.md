@@ -17,7 +17,6 @@ int main() {
     InitWindow(800, 800, "ICN in C++ Example");
     Icn icn;
 }
-
 ```
 3. Render the ICN of your preference (add script after window setup)
    
