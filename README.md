@@ -2,19 +2,26 @@
 
 ## How to use
 
-1. Import the icn.hpp file along with Raylib ```cpp
+1. Import the icn.hpp file along with Raylib
+   
+```
 #include "icn.hpp"
 #include <raylib.h>
 ```
 
-2. Setup the window ```cpp
+
+2. Setup the window
+   
+```
 int main() {
     InitWindow(800, 800, "ICN in C++ Example");
     Icn icn;
 }
-```
 
-3. Render the ICN of your preference (add script after window setup) ```cpp
+```
+3. Render the ICN of your preference (add script after window setup)
+   
+```
 while (!WindowShouldClose()) {
     BeginDrawing();
     ClearBackground(BLACK);
