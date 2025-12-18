@@ -1,4 +1,5 @@
 #include <raylib.h>
+#include <raymath.h>
 #include <string>
 #include <iostream>
 #include <sstream>
@@ -6,8 +7,9 @@
 inline int getCmdLength(std::string cmd) {
     if (cmd == "w" || cmd == "c") return 1;
     if (cmd == "square" || cmd == "rect" || cmd == "line") return 4;
-    if (cmd == "dot" || cmd == "cont") return 2;
-    if (cmd == "cutcircle") return 5;
+    if (cmd == "dot" || cmd == "cont" || cmd == "move") return 2;
+    if (cmd == "cutcircle" || cmd == "ellipse") return 5;
+    if (cmd == "tri") return 6;
     return 0;
 }
 
@@ -98,7 +100,45 @@ inline void DrawRectangleOutline(float x, float y, float w, float h, int thickne
     DrawRoundedLine({ x - (w / 2), y + (h / 2) }, { x - (w / 2), y - (h / 2) }, thickness, color);
 }
 
-inline void renderIcn(const std::vector<std::pair<std::string, std::vector<std::string>>>& data, int offX, int offY, float size) {
+inline void DrawCustomEllipse(int cx, int cy, float rx, float ry, float rotDeg, float thickness, int segments, Color color) {
+    float rotation = rotDeg * DEG2RAD;
+    float step = 2 * PI / segments;
+
+    float cr = cosf(rotation);
+    float sr = sinf(rotation);
+
+    Vector2 first = {0};
+    Vector2 prev  = {0};
+
+    for (int i = 0; i <= segments; i++) {
+        float a = step * i;
+
+        float x = cosf(a) * rx;
+        float y = sinf(a) * ry;
+
+        Vector2 p = {
+            cx + x * cr - y * sr,
+            cy + x * sr + y * cr
+        };
+
+        if (i == 0)
+            first = p;
+        else
+            DrawLineEx(prev, p, thickness, color);
+
+        prev = p;
+    }
+
+    DrawLineEx(prev, first, thickness, color);
+}
+
+inline bool checkDirs(Vector2 p1, Vector2 p2, Vector2 p3) {
+    return ((p2.x - p1.x) * (p3.y - p1.y) - (p2.y - p1.y) * (p3.x - p1.x)) < 0;
+}
+
+inline void renderIcn(const std::vector<std::pair<std::string, std::vector<std::string>>>& data, int origX, int origY, float size) {
+    int offX = origX;
+    int offY = origY;
     Color curColor = WHITE;
     float width = 2.5 * size;
     float xSave = 0;
@@ -124,6 +164,15 @@ inline void renderIcn(const std::vector<std::pair<std::string, std::vector<std::
             xSave = x + (w / 2);
             ySave = y + (h / 2);
             DrawRectangleOutline(x + offX, y + offY, w, h, width, curColor);
+        } else if (cmd == "tri") {
+            Vector2 p1 = { safeStof(args[0]) * size + offX, 0 - safeStof(args[1]) * size + offY };
+            Vector2 p2 = { safeStof(args[2]) * size + offX, 0 - safeStof(args[3]) * size + offY };
+            Vector2 p3 = { safeStof(args[4]) * size + offX, 0 - safeStof(args[5]) * size + offY };
+
+            xSave = p3.x;
+            ySave = p3.y;
+            bool flip = checkDirs(p1, p2, p3);
+            DrawTriangle(p1, flip ? p2 : p3, flip ? p3 : p2, curColor);
         } else if (cmd == "rect") {
             float x = safeStof(args[0]) * size;
             float y = 0 - safeStof(args[1]) * size;
@@ -173,6 +222,21 @@ inline void renderIcn(const std::vector<std::pair<std::string, std::vector<std::
                 oldX = newX;
                 oldY = newY;
             }
+        } else if (cmd == "ellipse") {
+            float x = safeStof(args[0]) * (size * 1);
+            float y = 0 - safeStof(args[1]) * (size * 1);
+            float w = (safeStof(args[2]) * size) / 1;
+            float h = w * safeStof(args[3]);
+            float d = safeStof(args[4]);
+            DrawCustomEllipse(x + offX, y + offY, w, h, d, width, 256, curColor);
+        } else if (cmd == "move") {
+            float x = safeStof(args[0]) * (size * 1);
+            float y = 0 - safeStof(args[1]) * (size * 1);
+            offX += x;
+            offY += y;
+        } else if (cmd == "back") {
+            offX = origX;
+            offY = origY;
         } else {
             std::cout << "Icn: Unknown command: '" << cmd << "'" << std::endl;
         }
