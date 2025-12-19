@@ -3,14 +3,64 @@
 #include <string>
 #include <iostream>
 #include <sstream>
+#include <unordered_map>
+#include <vector>
+#include <utility>
+#include <variant>
 
-inline int getCmdLength(std::string cmd) {
-    if (cmd == "w" || cmd == "c") return 1;
-    if (cmd == "square" || cmd == "rect" || cmd == "line") return 4;
-    if (cmd == "dot" || cmd == "cont" || cmd == "move") return 2;
-    if (cmd == "cutcircle" || cmd == "ellipse") return 5;
-    if (cmd == "tri") return 6;
-    return 0;
+using Arg = std::variant<float, std::string>;
+
+enum class Op {
+    Color, Width, Square, Rect, Line, Cont, Dot,
+    Cutcircle, Ellipse, Move, Back, Tri, Curve, Unknown
+};
+
+struct cmd {
+    Op op;
+    std::vector<Arg> args;
+};
+
+enum class ArgType { Float, String };
+
+using Signature = std::vector<ArgType>;
+
+inline const std::unordered_map<Op, Signature> signatures = {
+    { Op::Width, { ArgType::Float } },
+    { Op::Color, { ArgType::String } },
+    { Op::Square, { ArgType::Float, ArgType::Float, ArgType::Float, ArgType::Float }},
+    { Op::Rect, { ArgType::Float, ArgType::Float, ArgType::Float, ArgType::Float }},
+    { Op::Move, { ArgType::Float, ArgType::Float } },
+    { Op::Line, { ArgType::Float, ArgType::Float, ArgType::Float, ArgType::Float } },
+    { Op::Cont, { ArgType::Float, ArgType::Float } },
+    { Op::Dot, { ArgType::Float, ArgType::Float } },
+    { Op::Ellipse, { ArgType::Float, ArgType::Float, ArgType::Float, ArgType::Float, ArgType::Float } },
+    { Op::Cutcircle, { ArgType::Float, ArgType::Float, ArgType::Float, ArgType::Float, ArgType::Float } },
+    { Op::Tri, { ArgType::Float, ArgType::Float, ArgType::Float, ArgType::Float, ArgType::Float, ArgType::Float } },
+    { Op::Curve, { ArgType::Float, ArgType::Float, ArgType::Float, ArgType::Float, ArgType::Float, ArgType::Float } },
+    { Op::Back, {}},
+};
+
+using Cmd = cmd;
+using CmdList = std::vector<Cmd>;
+
+
+inline std::unordered_map<std::string, CmdList> cache{};
+
+inline Op parseOp(std::string_view s) {
+    if (s == "w") return Op::Width;
+    if (s == "c") return Op::Color;
+    if (s == "square") return Op::Square;
+    if (s == "rect") return Op::Rect;
+    if (s == "line") return Op::Line;
+    if (s == "dot") return Op::Dot;
+    if (s == "cont") return Op::Cont;
+    if (s == "move") return Op::Move;
+    if (s == "cutcircle") return Op::Cutcircle;
+    if (s == "ellipse") return Op::Ellipse;
+    if (s == "tri") return Op::Tri;
+    if (s == "curve") return Op::Curve;
+
+    return Op::Unknown;
 }
 
 inline Color hexToColor(const std::string& hex, unsigned char alpha = 255) {
@@ -30,7 +80,7 @@ inline Color hexToColor(const std::string& hex, unsigned char alpha = 255) {
 
     if (cleanHex.size() != 6) {
         std::cout << "Icn: Invalid color '" << hex << "'\n";
-        return WHITE;
+        return BLACK;
     }
 
     unsigned int hexValue;
@@ -53,8 +103,8 @@ inline float safeStof(const std::string& in) {
     }
 }
 
-inline std::vector<std::pair<std::string, std::vector<std::string>>> parseCode(const std::string& code) {
-    std::vector<std::pair<std::string, std::vector<std::string>>> returned;
+inline CmdList parseCode(const std::string& code) {
+    CmdList returned;
 
     std::vector<std::string> tokens;
     std::string current;
@@ -72,16 +122,44 @@ inline std::vector<std::pair<std::string, std::vector<std::string>>> parseCode(c
     if (!current.empty()) tokens.push_back(current);
 
     for (size_t i = 0; i < tokens.size();) {
-        std::string cmd = tokens[i];
-        int argCount = getCmdLength(cmd);
+        std::string cmdStr = tokens[i];
 
-        std::vector<std::string> args;
-        for (int j = 1; j <= argCount && (i + j) < tokens.size(); j++) {
-            args.push_back(tokens[i + j]);
+        Op op = parseOp(cmdStr);
+
+        auto it = signatures.find(op);
+        if (it == signatures.end()) {
+            std::cout << "Icn: Unknown command '" << cmdStr << "'\n";
+            i += 1;
+            continue;
+        }
+        const auto& sig = it->second;
+
+        size_t expected = sig.size();
+
+        if (i + expected >= tokens.size()) {
+            std::cout << "Icn: Not enough arguments for '" << cmdStr << "'\n";
+            i += 1;
+            continue;
         }
 
-        returned.push_back({cmd, args});
-        i += 1 + argCount;
+        std::vector<Arg> args;
+        args.reserve(sig.size());
+
+        for (size_t a = 0; a < sig.size(); ++a) {
+            const std::string& tok = tokens[i + 1 + a];
+
+            switch (sig[a]) {
+                case ArgType::Float:
+                    args.emplace_back(safeStof(tok));
+                    break;
+                case ArgType::String:
+                    args.emplace_back(tok);
+                    break;
+            }
+        }
+
+        returned.push_back(cmd{ op, std::move(args) });
+        i += 1 + expected;
     }
 
     return returned;
@@ -110,7 +188,7 @@ inline void DrawCustomEllipse(int cx, int cy, float rx, float ry, float rotDeg, 
     Vector2 first = {0};
     Vector2 prev  = {0};
 
-    for (int i = 0; i <= segments; i++) {
+    for (int i = 0; i < segments; i++) {
         float a = step * i;
 
         float x = cosf(a) * rx;
@@ -136,7 +214,13 @@ inline bool checkDirs(Vector2 p1, Vector2 p2, Vector2 p3) {
     return ((p2.x - p1.x) * (p3.y - p1.y) - (p2.y - p1.y) * (p3.x - p1.x)) < 0;
 }
 
-inline void renderIcn(const std::vector<std::pair<std::string, std::vector<std::string>>>& data, int origX, int origY, float size) {
+inline void drawRoundedSplineSegmentBezierQuadratic(Vector2 p1, Vector2 c, Vector2 p2, int thickness, Color color) {
+    DrawSplineSegmentBezierQuadratic(p1, c, p2, thickness, color);
+    DrawCircle(p1.x, p1.y, thickness / 2, color);
+    DrawCircle(p2.x, p2.y, thickness / 2, color);
+}
+
+inline void renderIcn(const CmdList& data, int origX, int origY, float size) {
     int offX = origX;
     int offY = origY;
     Color curColor = WHITE;
@@ -144,101 +228,146 @@ inline void renderIcn(const std::vector<std::pair<std::string, std::vector<std::
     float xSave = 0;
     float ySave = 0;
     for (const auto& line : data) {
-        if (line.second.empty()) { 
-            std::cout << "Icn: Empty command\n";
-            continue;
-        }
-        std::string cmd = line.first;
-        std::vector<std::string> args = line.second;
+        const cmd& c = line;
+        const auto& args = line.args;
 
-        if (cmd == "c") {
-            curColor = hexToColor(args[0]);
-        } else if (cmd == "w") {
-            width = safeStof(args[0]) * size;
-        } else if (cmd == "square") {
-            float x = safeStof(args[0]) * size;
-            float y = 0 - safeStof(args[1]) * size;
-            float w = safeStof(args[2]) * (size * 2);
-            float h = safeStof(args[3]) * (size * 2);
-
-            xSave = x + (w / 2);
-            ySave = y + (h / 2);
-            DrawRectangleOutline(x + offX, y + offY, w, h, width, curColor);
-        } else if (cmd == "tri") {
-            Vector2 p1 = { safeStof(args[0]) * size + offX, 0 - safeStof(args[1]) * size + offY };
-            Vector2 p2 = { safeStof(args[2]) * size + offX, 0 - safeStof(args[3]) * size + offY };
-            Vector2 p3 = { safeStof(args[4]) * size + offX, 0 - safeStof(args[5]) * size + offY };
-
-            xSave = p3.x;
-            ySave = p3.y;
-            bool flip = checkDirs(p1, p2, p3);
-            DrawTriangle(p1, flip ? p2 : p3, flip ? p3 : p2, curColor);
-        } else if (cmd == "rect") {
-            float x = safeStof(args[0]) * size;
-            float y = 0 - safeStof(args[1]) * size;
-            float w = safeStof(args[2]) * (size * 2);
-            float h = safeStof(args[3]) * (size * 2);
-
-            xSave = x + (w / 2);
-            ySave = y + (h / 2);
-            DrawRectangle(x + offX, y + offY, w, h, curColor);
-        } else if (cmd == "line") {
-            float x = safeStof(args[0]) * (size);
-            float y = 0 - safeStof(args[1]) * (size);
-            float x2 = safeStof(args[2]) * (size);
-            float y2 = 0 - safeStof(args[3]) * (size);
-            xSave = x2;
-            ySave = y2;
-            DrawRoundedLine({static_cast<float>(x + offX), static_cast<float>(y + offY)}, {static_cast<float>(x2 + offX), static_cast<float>(y2 + offY)}, static_cast<float>(width), curColor);
-        } else if (cmd == "cont") {
-            float x = safeStof(args[0]) * size;
-            float y = 0 - safeStof(args[1]) * size;
-            DrawRoundedLine({static_cast<float>(xSave + offX), static_cast<float>(ySave + offY)}, {static_cast<float>(x + offX), static_cast<float>(y + offY)}, static_cast<float>(width), curColor);
-            xSave = x;
-            ySave = y;
-        } else if (cmd == "dot") {
-            float x = safeStof(args[0]) * (size);
-            float y = 0 - safeStof(args[1]) * (size);
-            DrawCircle(x + offX, y + offY, (width) / 2, curColor);
-            xSave = x;
-            ySave = y;
-        } else if (cmd == "cutcircle") {
-            float x = safeStof(args[0]) * (size * 1);
-            float y = 0 - safeStof(args[1]) * (size * 1);
-            float radius = (safeStof(args[2]) * size) / 1;
-            float angleICN = safeStof(args[3]);
-            float filledICN = safeStof(args[4]);
-
-            float circleAngle = ((angleICN * 10) - filledICN);
-            float oldX = x + sinf(circleAngle * DEG2RAD) * radius;
-            float oldY = y - cosf(circleAngle * DEG2RAD) * radius;
-
-            int steps = static_cast<int>((filledICN / 3) + 1);
-            for (int i = 0; i < steps - 1; i++) {
-                circleAngle += 6.0f;
-                float newX = x + sinf(circleAngle * DEG2RAD) * radius;
-                float newY = y - cosf(circleAngle * DEG2RAD) * radius;
-                DrawRoundedLine({ oldX + offX, oldY + offY }, { newX + offX, newY + offY }, width * 1, curColor);
-                oldX = newX;
-                oldY = newY;
+        switch (c.op) {
+            case Op::Color: {
+                curColor = hexToColor(std::get<std::string>(args[0]));
+                break;
             }
-        } else if (cmd == "ellipse") {
-            float x = safeStof(args[0]) * (size * 1);
-            float y = 0 - safeStof(args[1]) * (size * 1);
-            float w = (safeStof(args[2]) * size) / 1;
-            float h = w * safeStof(args[3]);
-            float d = safeStof(args[4]);
-            DrawCustomEllipse(x + offX, y + offY, w, h, d, width, 256, curColor);
-        } else if (cmd == "move") {
-            float x = safeStof(args[0]) * (size * 1);
-            float y = 0 - safeStof(args[1]) * (size * 1);
-            offX += x;
-            offY += y;
-        } else if (cmd == "back") {
-            offX = origX;
-            offY = origY;
-        } else {
-            std::cout << "Icn: Unknown command: '" << cmd << "'" << std::endl;
+            case Op::Width: {
+                width = std::get<float>(args[0]) * size;
+                break;
+            }
+            case Op::Square: {
+                float x = std::get<float>(args[0]) * size;
+                float y = 0 - std::get<float>(args[1]) * size;
+                float w = std::get<float>(args[2]) * (size * 2);
+                float h = std::get<float>(args[3]) * (size * 2);
+
+                xSave = x + (w / 2);
+                ySave = y + (h / 2);
+                DrawRectangleOutline(x + offX, y + offY, w, h, width, curColor);
+                break;
+            }
+            case Op::Tri: {
+                Vector2 p1 = { std::get<float>(args[0]) * size + offX, 0 - std::get<float>(args[1]) * size + offY };
+                Vector2 p2 = { std::get<float>(args[2]) * size + offX, 0 - std::get<float>(args[3]) * size + offY };
+                Vector2 p3 = { std::get<float>(args[4]) * size + offX, 0 - std::get<float>(args[5]) * size + offY };
+
+                xSave = p3.x;
+                ySave = p3.y;
+                bool flip = checkDirs(p1, p2, p3);
+                DrawTriangle(p1, flip ? p2 : p3, flip ? p3 : p2, curColor);
+                break;
+            }
+            case Op::Rect: {
+                float x = std::get<float>(args[0]) * size;
+                float y = 0 - std::get<float>(args[1]) * size;
+                float w = std::get<float>(args[2]) * (size * 2);
+                float h = std::get<float>(args[3]) * (size * 2);
+
+                xSave = x + (w / 2);
+                ySave = y + (h / 2);
+                DrawRectangle(x + offX, y + offY, w, h, curColor);
+                break;
+            }
+            case Op::Line: {
+                float x = std::get<float>(args[0]) * (size);
+                float y = 0 - std::get<float>(args[1]) * (size);
+                float x2 = std::get<float>(args[2]) * (size);
+                float y2 = 0 - std::get<float>(args[3]) * (size);
+                xSave = x2;
+                ySave = y2;
+                DrawRoundedLine({static_cast<float>(x + offX), static_cast<float>(y + offY)}, {static_cast<float>(x2 + offX), static_cast<float>(y2 + offY)}, static_cast<float>(width), curColor);
+                break;
+            }
+            case Op::Cont: {
+                float x = std::get<float>(args[0]) * size;
+                float y = 0 - std::get<float>(args[1]) * size;
+                DrawRoundedLine({static_cast<float>(xSave + offX), static_cast<float>(ySave + offY)}, {static_cast<float>(x + offX), static_cast<float>(y + offY)}, static_cast<float>(width), curColor);
+                xSave = x;
+                ySave = y;
+                break;
+            }
+            case Op::Dot: {
+                float x = std::get<float>(args[0]) * (size);
+                float y = 0 - std::get<float>(args[1]) * (size);
+                DrawCircle(x + offX, y + offY, (width) / 2, curColor);
+                xSave = x;
+                ySave = y;
+                break;
+            }
+            case Op::Cutcircle: {
+                float x = std::get<float>(args[0]) * (size);
+                float y = 0 - std::get<float>(args[1]) * (size);
+                float radius = (std::get<float>(args[2]) * size);
+                float angleICN = std::get<float>(args[3]);
+                float filledICN = std::get<float>(args[4]);
+
+                float circleAngle = ((angleICN * 10) - filledICN);
+                float oldX = x + sinf(circleAngle * DEG2RAD) * radius;
+                float oldY = y - cosf(circleAngle * DEG2RAD) * radius;
+
+                int steps = static_cast<int>((filledICN / 3) + 1);
+                for (int i = 0; i < steps - 1; i++) {
+                    circleAngle += 6.0f;
+                    float newX = x + sinf(circleAngle * DEG2RAD) * radius;
+                    float newY = y - cosf(circleAngle * DEG2RAD) * radius;
+                    DrawRoundedLine({ oldX + offX, oldY + offY }, { newX + offX, newY + offY }, width * 1, curColor);
+                    oldX = newX;
+                    oldY = newY;
+                }
+                break;
+            }
+            case Op::Ellipse: {
+                float x = std::get<float>(args[0]) * (size);
+                float y = 0 - std::get<float>(args[1]) * (size);
+                float w = (std::get<float>(args[2]) * size);
+                float h = w * std::get<float>(args[3]);
+                float d = std::get<float>(args[4]);
+                DrawCustomEllipse(x + offX, y + offY, w, h, d, width, 256, curColor);
+                break;
+            }
+            case Op::Move: {
+                float x = std::get<float>(args[0]) * (size);
+                float y = 0 - std::get<float>(args[1]) * (size);
+                offX += x;
+                offY += y;
+                break;
+            }
+            case Op::Back: {
+                offX = origX;
+                offY = origY;
+                break;
+            }
+            case Op::Curve: {
+                Vector2 p1 = {
+                    std::get<float>(args[0]) * size + offX,
+                    -std::get<float>(args[1]) * size + offY
+                };
+
+                Vector2 control = {
+                    std::get<float>(args[4]) * size + offX,
+                    -std::get<float>(args[5]) * size + offY
+                };
+
+                Vector2 p2 = {
+                    std::get<float>(args[2]) * size + offX,
+                    -std::get<float>(args[3]) * size + offY
+                };
+
+                xSave = p2.x;
+                ySave = p2.y;
+
+                drawRoundedSplineSegmentBezierQuadratic(p1, control, p2, width, curColor);
+                break;
+            }
+            case Op::Unknown: {
+                std::cout << "Icn: Unknown command" << std::endl;
+                break;
+            }
         }
     }
 }
@@ -246,10 +375,21 @@ inline void renderIcn(const std::vector<std::pair<std::string, std::vector<std::
 class Icn {
 public:
     void render(std::string code, Vector2 pos = { 0, 0 }, float size = 10) {
-        renderIcn(parseCode(code), pos.x, pos.y, size);
+        renderIcn(parseC(code), pos.x, pos.y, size);
     }
-    std::vector<std::pair<std::string, std::vector<std::string>>> parse(std::string code) {
-        return parseCode(code);
+    CmdList parse(std::string code) {
+        return parseC(code);
     }
 private:
+    std::unordered_map<std::string, CmdList> cache;
+
+    const CmdList& parseC(const std::string& code) {
+        auto it = cache.find(code);
+        if (it != cache.end())
+            return it->second;
+
+        CmdList parsed = parseCode(code);
+        auto [inserted, _] = cache.emplace(code, std::move(parsed));
+        return inserted->second;
+    }
 };
